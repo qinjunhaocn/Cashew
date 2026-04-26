@@ -1180,5 +1180,15 @@
   "import-warning": "Import Warning",
   "import-warning-description": "Import may fail! Please make sure you have selected a valid Cashew [.sqlite] or [.sql] backup file",
   "duplicate-budget-question": "Duplicate Budget?",
-  "duplicate-budget": "Duplicate Budget"
+  "duplicate-budget": "Duplicate Budget",
+  "cloudflare-r2-backup": "Cloudflare R2 Backup",
+  "r2-endpoint": "Endpoint",
+  "r2-access-key": "Access Key ID",
+  "r2-secret-key": "Secret Access Key",
+  "r2-bucket": "Bucket Name",
+  "r2-region": "Region",
+  "r2-config-error": "R2 Configuration Error",
+  "test-connection": "Test Connection",
+  "connection-success": "Connection successful",
+  "connection-failed": "Connection failed"
 }

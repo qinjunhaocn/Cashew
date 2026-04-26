@@ -40,6 +40,8 @@ import 'package:google_sign_in/google_sign_in.dart' as signIn;
 import 'package:http/http.dart' as http;
 import 'package:shimmer/shimmer.dart';
 import 'package:universal_html/html.dart' as html;
+import 'package:budget/struct/cloudFlareR2.dart';
+import 'package:minio_new/minio.dart';
 import 'dart:io';
 import 'package:budget/struct/randomConstants.dart';
 
@@ -300,7 +302,8 @@ Future<bool> signInAndSync(BuildContext context,
 }
 
 Future<void> createBackupInBackground(context) async {
-  if (appStateSettings["hasSignedIn"] == false) return;
+  if (appStateSettings["hasSignedIn"] == false &&
+      appStateSettings["cloudFlareR2Enabled"] == false) return;
   if (errorSigningInDuringCloud == true) return;
   if (kIsWeb && !entireAppLoaded) return;
   // print(entireAppLoaded);
@@ -328,7 +331,9 @@ Future<void> createBackupInBackground(context) async {
       } else {
         hasSignedIn = true;
       }
-      if (hasSignedIn == false) {
+
+      // If google sign in failed but R2 is enabled, we still want to back up to R2
+      if (hasSignedIn == false && appStateSettings["cloudFlareR2Enabled"] == false) {
         return;
       }
       await createBackup(context, silentBackup: true, deleteOldBackups: true);
@@ -412,43 +417,54 @@ Future<void> createBackup(
   }
 
   try {
-    if (deleteOldBackups)
+    if (deleteOldBackups) {
       await deleteRecentBackups(context, appStateSettings["backupLimit"],
           silentDelete: true);
+      if (appStateSettings["cloudFlareR2Enabled"]) {
+        await CloudFlareR2Client.deleteOldBackups(appStateSettings["backupLimit"]);
+      }
+    }
 
     DBFileInfo currentDBFileInfo = await getCurrentDBFileInfo();
 
-    final authHeaders = await googleUser!.authHeaders;
-    final authenticateClient = GoogleAuthClient(authHeaders);
-    final driveApi = drive.DriveApi(authenticateClient);
+    if (googleUser != null) {
+      final authHeaders = await googleUser!.authHeaders;
+      final authenticateClient = GoogleAuthClient(authHeaders);
+      final driveApi = drive.DriveApi(authenticateClient);
 
-    var media = new drive.Media(
-        currentDBFileInfo.mediaStream, currentDBFileInfo.dbFileBytes.length);
+      var media = new drive.Media(
+          currentDBFileInfo.mediaStream, currentDBFileInfo.dbFileBytes.length);
 
-    var driveFile = new drive.File();
-    final timestamp =
-        DateFormat("yyyy-MM-dd-hhmmss").format(DateTime.now().toUtc());
-    // -$timestamp
-    driveFile.name =
-        "db-v$schemaVersionGlobal-${getCurrentDeviceName()}.sqlite";
-    if (clientIDForSync != null)
+      var driveFile = new drive.File();
+      final timestamp =
+          DateFormat("yyyy-MM-dd-hhmmss").format(DateTime.now().toUtc());
+      // -$timestamp
       driveFile.name =
-          getCurrentDeviceSyncBackupFileName(clientIDForSync: clientIDForSync);
-    driveFile.modifiedTime = DateTime.now().toUtc();
-    driveFile.parents = ["appDataFolder"];
+          "db-v$schemaVersionGlobal-${getCurrentDeviceName()}.sqlite";
+      if (clientIDForSync != null)
+        driveFile.name =
+            getCurrentDeviceSyncBackupFileName(clientIDForSync: clientIDForSync);
+      driveFile.modifiedTime = DateTime.now().toUtc();
+      driveFile.parents = ["appDataFolder"];
 
-    await driveApi.files.create(driveFile, uploadMedia: media);
+      await driveApi.files.create(driveFile, uploadMedia: media);
 
-    if (clientIDForSync == null)
-      openSnackbar(
-        SnackbarMessage(
-          title: "backup-created".tr(),
-          description: driveFile.name,
-          icon: appStateSettings["outlinedIcons"]
-              ? Icons.backup_outlined
-              : Icons.backup_rounded,
-        ),
-      );
+      if (clientIDForSync == null)
+        openSnackbar(
+          SnackbarMessage(
+            title: "backup-created".tr(),
+            description: driveFile.name,
+            icon: appStateSettings["outlinedIcons"]
+                ? Icons.backup_outlined
+                : Icons.backup_rounded,
+          ),
+        );
+    }
+
+    if (appStateSettings["cloudFlareR2Enabled"]) {
+      await CloudFlareR2Client.uploadBackup(context, silent: true);
+    }
+
     if (clientIDForSync == null)
       await updateSettings("lastBackup", DateTime.now().toString(),
           pagesNeedingRefresh: [], updateGlobalState: false);
@@ -1564,4 +1580,204 @@ bool openBackupReminderPopupCheck(BuildContext context) {
     return true;
   }
   return false;
+}
+
+class CloudFlareR2Management extends StatefulWidget {
+  const CloudFlareR2Management({super.key});
+
+  @override
+  State<CloudFlareR2Management> createState() => _CloudFlareR2ManagementState();
+}
+
+class _CloudFlareR2ManagementState extends State<CloudFlareR2Management> {
+  List<ResultObject> backups = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBackups();
+  }
+
+  Future<void> _loadBackups() async {
+    setState(() => isLoading = true);
+    final result = await CloudFlareR2Client.getBackups();
+    setState(() {
+      backups = result;
+      isLoading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupFramework(
+      title: "cloudflare-r2-backup".tr(),
+      child: Column(
+        children: [
+          SettingsContainerSwitch(
+            title: "cloudflare-r2-backup".tr(),
+            initialValue: appStateSettings["cloudFlareR2Enabled"],
+            onSwitched: (value) async {
+              await updateSettings("cloudFlareR2Enabled", value, updateGlobalState: true);
+              setState(() {});
+            },
+            icon: Icons.cloud_queue,
+          ),
+          AnimatedExpanded(
+            expand: appStateSettings["cloudFlareR2Enabled"],
+            child: Column(
+              children: [
+                SettingsContainerInput(
+                  title: "r2-endpoint".tr(),
+                  initialValue: appStateSettings["cloudFlareR2Endpoint"],
+                  onChanged: (value) => updateSettings("cloudFlareR2Endpoint", value, updateGlobalState: false),
+                  icon: Icons.link,
+                ),
+                SettingsContainerInput(
+                  title: "r2-access-key".tr(),
+                  initialValue: appStateSettings["cloudFlareR2AccessKey"],
+                  onChanged: (value) => updateSettings("cloudFlareR2AccessKey", value, updateGlobalState: false),
+                  icon: Icons.key,
+                ),
+                SettingsContainerInput(
+                  title: "r2-secret-key".tr(),
+                  initialValue: appStateSettings["cloudFlareR2SecretKey"],
+                  onChanged: (value) => updateSettings("cloudFlareR2SecretKey", value, updateGlobalState: false),
+                  icon: Icons.security,
+                ),
+                SettingsContainerInput(
+                  title: "r2-bucket".tr(),
+                  initialValue: appStateSettings["cloudFlareR2Bucket"],
+                  onChanged: (value) => updateSettings("cloudFlareR2Bucket", value, updateGlobalState: false),
+                  icon: Icons.folder,
+                ),
+                SettingsContainerInput(
+                  title: "r2-region".tr(),
+                  initialValue: appStateSettings["cloudFlareR2Region"],
+                  onChanged: (value) => updateSettings("cloudFlareR2Region", value, updateGlobalState: false),
+                  icon: Icons.public,
+                ),
+                SettingsContainerSwitch(
+                  title: "auto-backups".tr(),
+                  description: "auto-backups-description".tr(),
+                  initialValue: appStateSettings["autoBackups"],
+                  onSwitched: (value) {
+                    updateSettings("autoBackups", value, updateGlobalState: true);
+                  },
+                  icon: Icons.auto_mode,
+                ),
+                AnimatedExpanded(
+                  expand: appStateSettings["autoBackups"],
+                  child: Column(
+                    children: [
+                      SettingsContainerDropdown(
+                        items: ["1", "2", "3", "7", "10", "14"],
+                        onChanged: (value) async {
+                          await updateSettings("autoBackupsFrequency", int.parse(value),
+                              updateGlobalState: false);
+                        },
+                        initial: appStateSettings["autoBackupsFrequency"].toString(),
+                        title: "backup-frequency".tr(),
+                        description: "number-of-days".tr(),
+                        icon: Icons.event_repeat,
+                      ),
+                      SettingsContainerDropdown(
+                        items: ["1", "5", "10", "20", "50", "100"],
+                        onChanged: (value) async {
+                          await updateSettings("backupLimit", int.parse(value),
+                              updateGlobalState: false);
+                        },
+                        initial: appStateSettings["backupLimit"].toString(),
+                        title: "backup-limit".tr(),
+                        icon: Icons.history,
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Button(
+                    label: "test-connection".tr(),
+                    onTap: () async {
+                      CloudFlareR2Client.resetClient();
+                      final success = await CloudFlareR2Client.testConnection();
+                      openSnackbar(
+                        SnackbarMessage(
+                          title: success ? "connection-success".tr() : "connection-failed".tr(),
+                          icon: success ? Icons.check_circle : Icons.error,
+                        ),
+                      );
+                      if (success) _loadBackups();
+                    },
+                  ),
+                ),
+                if (appStateSettings["cloudFlareR2Endpoint"] != "" && 
+                    appStateSettings["cloudFlareR2AccessKey"] != "" && 
+                    appStateSettings["cloudFlareR2Bucket"] != "")
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: OutlinedButtonStacked(
+                    alignLeft: true,
+                    alignCaptionLeft: true,
+                    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                    text: "create-backup".tr(),
+                    iconData: Icons.add_to_photos_outlined,
+                    onTap: () async {
+                      await CloudFlareR2Client.uploadBackup(context);
+                      _loadBackups();
+                    },
+                  ),
+                ),
+                if (isLoading)
+                  Padding(
+                    padding: const EdgeInsets.all(20.0),
+                    child: CircularProgressIndicator(),
+                  )
+                else
+                  ...backups.map((backup) => ListTile(
+                    title: TextFont(text: backup.key ?? ""),
+                    subtitle: TextFont(text: backup.lastModified?.toString() ?? ""),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.download_rounded),
+                          onPressed: () => CloudFlareR2Client.downloadBackup(context, backup.key!),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.delete_outline_rounded),
+                          onPressed: () async {
+                            await CloudFlareR2Client.deleteBackup(backup.key!);
+                            _loadBackups();
+                          },
+                        ),
+                      ],
+                    ),
+                  )),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class CloudFlareR2LoginButton extends StatelessWidget {
+  const CloudFlareR2LoginButton({
+    super.key,
+    this.isOutlinedButton = true,
+  });
+
+  final bool isOutlinedButton;
+
+  @override
+  Widget build(BuildContext context) {
+    return SettingsContainerOpenPage(
+      openPage: CloudFlareR2Management(),
+      isOutlined: isOutlinedButton,
+      title: "cloudflare-r2-backup".tr(),
+      icon: Icons.cloud_queue_rounded,
+    );
+  }
 }

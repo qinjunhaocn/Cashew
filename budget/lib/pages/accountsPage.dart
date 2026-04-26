@@ -128,7 +128,8 @@ class AccountsPageState extends State<AccountsPage> {
                         onTap: () async {
                           await signInAndSync(context, next: () {});
                         },
-                      )
+                      ),
+                      CloudFlareR2LoginButton(isOutlinedButton: true),
                     ],
                   )
                 : Column(
@@ -184,6 +185,8 @@ class AccountsPageState extends State<AccountsPage> {
                         textAlign: TextAlign.center,
                         fontSize: 15,
                       ),
+                      SizedBox(height: 15),
+                      CloudFlareR2LoginButton(isOutlinedButton: true),
                       SizedBox(height: 15),
                       IntrinsicWidth(
                         child: Button(

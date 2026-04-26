@@ -1180,5 +1180,15 @@
   "import-warning": "进口警告",
   "import-warning-description": "导入可能会失败！请确保您选择了有效的 Cashew [.sqlite] 或 [.sql] 备份文件",
   "duplicate-budget-question": "预算重复？",
-  "duplicate-budget": "重复预算"
+  "duplicate-budget": "重复预算",
+  "cloudflare-r2-backup": "Cloudflare R2 备份",
+  "r2-endpoint": "终端节点 (Endpoint)",
+  "r2-access-key": "访问密钥 ID (Access Key)",
+  "r2-secret-key": "机密访问密钥 (Secret Key)",
+  "r2-bucket": "存储桶名称 (Bucket)",
+  "r2-region": "区域 (Region)",
+  "r2-config-error": "R2 配置错误",
+  "test-connection": "测试连接",
+  "connection-success": "连接成功",
+  "connection-failed": "连接失败"
 }
